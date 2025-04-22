@@ -19,9 +19,9 @@ class LaserObstacleAvoidance
         tf_buffer_(),
         tf_listener_(tf_buffer_),
         costmap_ros_("custom_costmap", tf_buffer_),
-        obstacle_range_(2.5), 
+        obstacle_range_(2.5),
         max_obstacle_height_(0.6),
-        raytrace_range_(3.0) 
+        raytrace_range_(3.0)
     {
         laser_sub_ = nh_.subscribe<sensor_msgs::LaserScan>("/scan", 1, &LaserObstacleAvoidance::laserCallback, this);
         
@@ -32,16 +32,16 @@ class LaserObstacleAvoidance
     private:
         void laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
         {
-            // 1. 清除旧障碍物信息（raytracing）
+            // 1. 清除旧障碍物信息
             clearOldObstacles(scan_msg);
 
-            // 2. 处理每个激光点
+            // 2. 处理激光点
             for (size_t i = 0; i < scan_msg->ranges.size(); ++i)
             {
                 float range = scan_msg->ranges[i];
                 if (range < scan_msg->range_min || range > scan_msg->range_max)
                 {
-                    continue; // 跳过无效数据
+                    continue;
                 }
 
                 // 计算激光点角度
