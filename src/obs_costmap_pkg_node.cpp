@@ -20,10 +20,14 @@ class LaserObstacleAvoidance
         tf_listener_(tf_buffer_),
         costmap_ros_("custom_costmap", tf_buffer_),
         obstacle_range_(2.5),
-        max_obstacle_height_(0.6),
-        raytrace_range_(3.0)
+        max_obstacle_height_(2.0),
+        raytrace_range_(3.0),
+        fx_(525.0), fy_(525.0), cx_(319.5), cy_(239.5),
+        have_camera_info_(true),
+        max_depth_(4.0)
     {
         laser_sub_ = nh_.subscribe<sensor_msgs::LaserScan>("/scan", 1, &LaserObstacleAvoidance::laserCallback, this);
+        rgbd_sub_ = nh_.subscribe<sensor_msgs::Image>("/camera/depth/points", 1, &LaserObstacleAvoidance::rgbdCallback, this);
         
         costmap_ = costmap_ros_.getCostmap();
         costmap_->setDefaultValue(costmap_2d::FREE_SPACE);
@@ -33,7 +37,7 @@ class LaserObstacleAvoidance
         void laserCallback(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
         {
             // 1. 清除旧障碍物信息
-            clearOldObstacles(scan_msg);
+            clearOldObstacles(scan_msg->header.stamp);
 
             // 2. 处理激光点
             for (size_t i = 0; i < scan_msg->ranges.size(); ++i)
@@ -87,7 +91,77 @@ class LaserObstacleAvoidance
             }
         }
 
-        void clearOldObstacles(const sensor_msgs::LaserScan::ConstPtr& scan_msg)
+        void LaserObstacleAvoidance::rgbdCallback(const sensor_msgs::Image::ConstPtr& image_msg)
+        {
+            if (!have_camera_info_)
+            {
+                ROS_WARN("Cant get depthcamera info");
+                return;
+            }
+
+            clearOldObstacles(scan_msg->header.stamp);
+
+            for (size_t v = 0; v < image_msg->height; ++v)
+            {
+                for (size_t u = 0; u < image_msg->width; ++u)
+                {
+                    float depth = 0.0;
+
+                    if (image_msg->encoding == sensor_msgs::image_encodings::TYPE_16UC1)
+                    {
+                        const uint16_t* row = reinterpret_cast<const uint16_t*>(&image_msg->data[0] + v * image_msg->step);
+                        depth = static_cast<float>(row[u]) / 1000.0; // mm -> m
+                    }
+                    else if (image_msg->encoding == sensor_msgs::image_encodings::TYPE_32FC1)
+                    {
+                        const float* row = reinterpret_cast<const float*>(&image_msg->data[0] + v * image_msg->step);
+                        depth = row[u];
+                    }
+                    else
+                    {
+                        ROS_WARN("Unsupported depth encoding: %s", image_msg->encoding.c_str());
+                        return;
+                    }
+
+                    if (depth <= 0.0 || depth > max_depth_)
+                        continue;
+
+                    double x = (u - cx_) * depth / fx_;
+                    double y = (v - cy_) * depth / fy_;
+                    double z = depth;
+
+                    geometry_msgs::PointStamped camera_point, map_point;
+                    camera_point.header = image_msg->header;
+                    camera_point.point.x = x;
+                    camera_point.point.y = y;
+                    camera_point.point.z = z;
+
+                    try
+                    {
+                        map_point = tf_buffer_.transform(camera_point, costmap_ros_.getGlobalFrameID(), ros::Duration(0.1));
+                    }
+                    catch (tf2::TransformException& ex)
+                    {
+                        ROS_WARN("Transform failed: %s", ex.what());
+                        continue;
+                    }
+
+                    if (fabs(map_point.point.z) > max_obstacle_height_)
+                        continue;
+
+                    if (sqrt(x*x + y*y) > obstacle_range_)
+                        continue;
+
+                    unsigned int mx, my;
+                    if (costmap_->worldToMap(map_point.point.x, map_point.point.y, mx, my))
+                    {
+                        costmap_->setCost(mx, my, costmap_2d::LETHAL_OBSTACLE);
+                    }
+                }
+            }
+        }
+
+        void clearOldObstacles(const ros::Time& stamp);
         {
             geometry_msgs::TransformStamped robot_transform;
             try
@@ -102,7 +176,7 @@ class LaserObstacleAvoidance
             }
             catch (tf2::TransformException& ex)
             {
-                ROS_WARN("Can not get robot pos: %s", ex.what());
+                ROS_WARN("Cant get robot pos: %s", ex.what());
                 return;
             }
 
@@ -134,6 +208,7 @@ class LaserObstacleAvoidance
 
         ros::NodeHandle nh_;
         ros::Subscriber laser_sub_;
+        ros::Subscriber rgbd_sub_;
 
         tf2_ros::Buffer             tf_buffer_;
         tf2_ros::TransformListener  tf_listener_;
@@ -143,6 +218,10 @@ class LaserObstacleAvoidance
         double obstacle_range_;
         double max_obstacle_height_;
         double raytrace_range_;
+
+        double fx_, fy_, cx_, cy_;
+        bool have_camera_info_;
+        double max_depth_;
 };
 
 int main(int argc, char** argv)
