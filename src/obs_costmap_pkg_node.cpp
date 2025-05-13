@@ -2,6 +2,9 @@
 
 #include <sensor_msgs/LaserScan.h>
 
+#include <sensor_msgs/Image.h>
+#include <sensor_msgs/image_encodings.h>
+
 #include <costmap_2d/costmap_2d_ros.h>
 #include <costmap_2d/costmap_2d.h>
 
@@ -91,7 +94,7 @@ class LaserObstacleAvoidance
             }
         }
 
-        void LaserObstacleAvoidance::rgbdCallback(const sensor_msgs::Image::ConstPtr& image_msg)
+        void rgbdCallback(const sensor_msgs::Image::ConstPtr& image_msg)
         {
             if (!have_camera_info_)
             {
@@ -99,7 +102,7 @@ class LaserObstacleAvoidance
                 return;
             }
 
-            clearOldObstacles(scan_msg->header.stamp);
+            clearOldObstacles(image_msg->header.stamp);
 
             for (size_t v = 0; v < image_msg->height; ++v)
             {
@@ -161,7 +164,7 @@ class LaserObstacleAvoidance
             }
         }
 
-        void clearOldObstacles(const ros::Time& stamp);
+        void clearOldObstacles(const ros::Time& stamp)
         {
             geometry_msgs::TransformStamped robot_transform;
             try
